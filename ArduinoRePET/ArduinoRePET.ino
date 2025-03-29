@@ -18,9 +18,7 @@ const unsigned char TEMP1 [] PROGMEM = {
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
    0x00, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0xc0, 0x3f, 0x00, 0x00,
-   0x00, 0xe0, 0x7a, 0x00,
-   
-   0x00, 0x00, 0x70, 0xe0, 0x00, 0x00, 0xfc, 0x30,
+   0x00, 0xe0, 0x7a, 0x00, 0x00, 0x00, 0x70, 0xe0, 0x00, 0x00, 0xfc, 0x30,
    0xc0, 0x00, 0x00, 0xfc, 0x19, 0x80, 0x01, 0x00, 0x00, 0x18, 0x82, 0x01,
    0x00, 0x00, 0x18, 0x86, 0x01, 0x00, 0x00, 0x18, 0x86, 0x01, 0x00, 0x00,
    0x18, 0x86, 0x01, 0x00, 0xf0, 0x19, 0x86, 0x01, 0x00, 0xf8, 0x19, 0x86,
@@ -103,15 +101,18 @@ double Max = 240;
 
 PID myPID(&Input, &Output, &Setpoint, conKp, conKi, conKd, DIRECT);
 
+const int D0 = 0; // PWM pin
+const int D3 = 3; // PWM pin
 
 void setup() {
   u8g2.begin();
   u8g2.setDisplayRotation (U8G2_R2);
+
   Serial.begin(9600);
   pinMode(D0, INPUT);
   
   Setpoint = 220;
-  0;
+  
   myPID.SetMode(AUTOMATIC);
   myPID.SetOutputLimits(D3,Max);
 }
@@ -141,12 +142,12 @@ void DISPLAY_OLED() {
   u8g2.firstPage();
   do {
     if (conta1 < 2){
-    u8g2.setFont(u8g2_font_spleen16x32_mu);
-    u8g2.setCursor(0,55);
-    u8g2.println("ECODECAT");
-    u8g2.drawXBMP(27, 5, 24, 24, ECODECAT);
-    delay(2000);
-    conta1 = conta1 + 1;
+      u8g2.setFont(u8g2_font_spleen16x32_mu);
+      u8g2.setCursor(0,55);
+      u8g2.println("ECODECAT");
+      u8g2.drawXBMP(27, 5, 24, 24, ECODECAT);
+      delay(2000);
+      conta1 = conta1 + 1;
     }
     else{
       if (TEMPERATURAPANTALLA >= 100) {
@@ -160,6 +161,7 @@ void DISPLAY_OLED() {
           u8g2.setCursor(68,30);
         }
       }
+      
       if (TEMPERATURA < 240){
         u8g2.setFont(u8g2_font_spleen16x32_mu);
         u8g2.println(int(TEMPERATURAPANTALLA));
@@ -169,6 +171,7 @@ void DISPLAY_OLED() {
         u8g2.setFont(u8g2_font_spleen16x32_mu);
         u8g2.println("MAX!");
       }
+
       u8g2.setFont(u8g2_font_tinytim_tf);
       u8g2.setCursor(105,15);
       u8g2.println("O");
@@ -215,14 +218,15 @@ void THERMISTOR() {
   
   TEMPERATURA = (1.0 / (c1 + c2 * logR2 + c3 * logR2 * logR2 * logR2)); // temperature in Kelvin
   TEMPERATURA = TEMPERATURA - 273.15; //convert Kelvin to Celcius
-  //Serial.println(TEMPERATURA);
+  Serial.println(TEMPERATURA);
   if (TEMPERATURA < 0) {TEMPERATURA = 0;}
     if (-2<= (TEMPERATURA - TEMPERATURAANT) <= 2){
   }
   else{
     TEMPERATURA = TEMPERATURAANT;
   }
-TEMPERATURAANT = TEMPERATURA;
+
+  TEMPERATURAANT = TEMPERATURA;
   
   contador = contador + 1;
   if (contador == 5){
