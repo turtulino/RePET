@@ -1,11 +1,27 @@
 #include <U8g2lib.h>
 #include <PID_v1.h>
 
+// I/O Used pins
+#define D0 0  // PWM pin
+#define D3 3  // PWM pin
 
-const int DISPLAY_ROTATION = U8G2_R2;
+
+//
+// Display info
+#define DISPLAY_ROTATION U8G2_R0
+#define DISPLAY_WIDTH 128  // OLED display width, in pixels
+#define DISPLAY_HEIGHT 64  // OLED display height, in pixels
+
+// For displays with 2 color zones
+#define DISPLAY_HEADER_SIZE 16
+#define DISPLAY_MAIN_SIZE 48
 
 // Init display object
-U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2( DISPLAY_ROTATION );
+// U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0);
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0);
+
+// Title 
+String display_title = String( "RePET" );
 
 const uint8_t ECODECAT[] PROGMEM = {
   0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0xd0, 0x00, 0x00, 0xd8, 0x01, 0x00,
@@ -97,8 +113,10 @@ int tempo = 0;
 int conta1 = 0;
 int conta2 = 0;
 
+// Controls screen refresh
 bool firstLoop = true;
 double lastTimeUpdated = 0;
+
 
 double Setpoint;  // will be the desired value
 double Input;     //
@@ -111,12 +129,14 @@ double Max = 240;
 
 PID myPID(&Input, &Output, &Setpoint, conKp, conKi, conKd, DIRECT);
 
-const int D0 = 0;  // PWM pin
-const int D3 = 3;  // PWM pin
+
+//
+// INIT
+//
 
 void setup() {
   u8g2.begin();
-  u8g2.setDisplayRotation( DISPLAY_ROTATION );
+  u8g2.setDisplayRotation(DISPLAY_ROTATION);
 
   Serial.begin(9600);
   pinMode(D0, INPUT);
@@ -127,12 +147,22 @@ void setup() {
   myPID.SetOutputLimits(D3, Max);
 }
 
+
+//
+// MAIN LOOP
+//
+
 void loop() {
   UPDATE_SCREEN();
   THERMISTOR();
   ENABLE();
   PIDCONTROL();
 }
+
+
+//
+//
+//
 
 void UPDATE_SCREEN() {
 
@@ -143,13 +173,12 @@ void UPDATE_SCREEN() {
 
     // Update every second
     unsigned long now = millis();
-    if( now - lastTimeUpdated > 1000 ) {
+
+    if ((now - lastTimeUpdated) > 1000) {
       show_status();
       lastTimeUpdated = now;
     }
-    
   }
-  
 }
 
 void ENABLE() {
@@ -181,8 +210,8 @@ void THERMISTOR() {
   TEMPERATURA = TEMPERATURA - 273.15;                                    // convert Kelvin to Celcius
 
   // Serial.println(TEMPERATURA);
-  if (TEMPERATURA < 0) { 
-    TEMPERATURA = 0; 
+  if (TEMPERATURA < 0) {
+    TEMPERATURA = 0;
   }
 
   if (-2 <= (TEMPERATURA - TEMPERATURAANT) <= 2) {
@@ -198,7 +227,6 @@ void THERMISTOR() {
     TEMPERATURAPANTALLA = TEMPERATURA;
     contador = 0;
   }
-
 }
 
 
@@ -244,60 +272,27 @@ void show_intro_logo() {
   } while (u8g2.nextPage());
 
   delay(1000);
-
-  u8g2.clear();
 }
 
 void show_status() {
-
 
   u8g2.firstPage();
 
   do {
 
-    if (TEMPERATURAPANTALLA >= 100) {
-      u8g2.setCursor(50, 30);
-    } else {
-      if (TEMPERATURAPANTALLA < 10) {
-        u8g2.setCursor(86, 30);
-      } else {
-        u8g2.setCursor(68, 30);
-      }
-    }
+    // Current temperature
+    show_temperature( TEMPERATURAPANTALLA, 60, DISPLAY_HEADER_SIZE + 16 + 4 );
 
-    if (TEMPERATURA < 240) {
-      u8g2.setFont(u8g2_font_spleen16x32_mu);
-      u8g2.println(int(TEMPERATURAPANTALLA));
-    } else {
-      u8g2.setCursor(50, 30);
-      u8g2.setFont(u8g2_font_spleen16x32_mu);
-      u8g2.println("MAX!");
-    }
+    // Target temperature
+    show_temperature( Setpoint, 60, DISPLAY_HEADER_SIZE + 46 );
 
-    u8g2.setFont(u8g2_font_tinytim_tf);
-    u8g2.setCursor(105, 15);
-    u8g2.println("O");
-    u8g2.setFont(u8g2_font_spleen16x32_mu);
-    u8g2.setCursor(112, 30);
-    u8g2.println("C");
-
-    u8g2.setCursor(50, 60);
-    u8g2.setFont(u8g2_font_spleen16x32_mu);
-    u8g2.println(int(Setpoint));
-    u8g2.setFont(u8g2_font_tinytim_tf);
-    u8g2.setCursor(105, 45);
-    u8g2.println("O");
-    u8g2.setFont(u8g2_font_spleen16x32_mu);
-    u8g2.setCursor(112, 60);
-    u8g2.println("C");
-
-
+    // Thermomether ICON
     if (ESTAT == 1) {
       if (conta2 < 30) {
-        u8g2.drawXBMP(5, -5, 40, 64, TEMP1);
+        u8g2.drawXBMP(5, 4, 40, 64, TEMP1);
         conta2 = conta2 + 1;
       } else {
-        u8g2.drawXBMP(5, -5, 40, 64, TEMP2);
+        u8g2.drawXBMP(5, 4, 40, 64, TEMP2);
         conta2 = conta2 + 1;
         if (conta2 == 70) {
           conta2 = 0;
@@ -305,5 +300,28 @@ void show_status() {
       }
     }
 
+    // Extra info in header 
+    show_header();
+
   } while (u8g2.nextPage());
 }
+
+void show_temperature( double value, int x, int y ) {
+
+  u8g2.setFont(u8g2_font_inb16_mf);
+  u8g2.setCursor(x, y);
+
+  char t[7];
+  sprintf(t, "%3d%cC", (int)value, 176 ); // 3 digits, º and "C".
+  u8g2.print(t);
+
+}
+
+void show_header() {
+  
+  u8g2.setFont(u8g2_font_6x13_tr);
+  u8g2.setCursor( DISPLAY_WIDTH - ( display_title.length() * 6 ) , DISPLAY_HEADER_SIZE - 6 );
+  u8g2.print( display_title );
+
+}
+
