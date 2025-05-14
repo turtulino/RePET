@@ -2,9 +2,12 @@
 #include <PID_v1.h>
 
 // I/O Used pins
-#define D0 0  // PWM pin
-#define D3 3  // PWM pin
 
+// #define D5 5  
+// #define D3 3  
+
+#define GATE_PIN D3    // Control heater (MOSFET gate)
+#define BUTTON_PIN D5  // Start/Staop
 
 //
 // Display info
@@ -20,8 +23,8 @@
 // U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0);
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0);
 
-// Title 
-String display_title = String( "RePET" );
+// Title
+String display_title = String("RePET");
 
 const uint8_t ECODECAT[] PROGMEM = {
   0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0xd0, 0x00, 0x00, 0xd8, 0x01, 0x00,
@@ -92,19 +95,38 @@ const unsigned char TEMP2[] PROGMEM = {
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
 
+//
+// Temperature reading usin NTC resistor
+//
+
 double Temperatura;
-int Vo;
+float Vo;
+float Vo_prev = 0;
+
+// Multiple samples to filter Vo input.
+#define VO_SAMPLE_COUNT 10
+bool vo_init = false;
+int vo_sample_index = 0;
+float vo_sample_buffer[ VO_SAMPLE_COUNT ];
+float vo_sample_sum = 0;
+float vo_sample_average = 0;
+float vo_sample_average_prev = 0;
+
+
 float R1 = 1000;  // resistencia fija del divisor de tension
 float logR2, R2;
 double TEMPERATURA;
 double TEMPERATURAPANTALLA;
 float c1 = 0, c2 = 0, c3 = 0;
+
 // coeficientes de S-H en pagina:
 // http://www.thinksrs.com/downloads/programs/Therm%20Calc/NTCCalibrator/NTCcalculator.htm
 
 int c = 0;
-int EN_ANT = LOW;
-int ESTAT = 0;
+int pressedPrev = LOW; // Previous pressed status
+bool ESTAT = false;
+
+
 float TEMPERATURAANT = 0;
 unsigned long tiempoAnterior = 0;
 int contador = 0;
@@ -113,6 +135,7 @@ int tempo = 0;
 int conta1 = 0;
 int conta2 = 0;
 
+
 // Controls screen refresh
 bool firstLoop = true;
 double lastTimeUpdated = 0;
@@ -120,12 +143,12 @@ double lastTimeUpdated = 0;
 
 double Setpoint;  // will be the desired value
 double Input;     //
-double Output;    //LED
+double Output;    // Controls heater value
 
 // PID parameters
 double agrKp = 6, agrKi = 0, agrKd = 0;
 double conKp = 12, conKi = 0.3, conKd = 0;
-double Max = 240;
+double Max = 255;  // Not sure if this works with other value.
 
 PID myPID(&Input, &Output, &Setpoint, conKp, conKi, conKd, DIRECT);
 
@@ -139,12 +162,13 @@ void setup() {
   u8g2.setDisplayRotation(DISPLAY_ROTATION);
 
   Serial.begin(9600);
-  pinMode(D0, INPUT);
+  
+  pinMode(BUTTON_PIN, INPUT);
 
-  Setpoint = 220;
+  Setpoint = 60;
 
   myPID.SetMode(AUTOMATIC);
-  myPID.SetOutputLimits(D3, Max);
+  myPID.SetOutputLimits(GATE_PIN, Max);
 }
 
 
@@ -174,7 +198,7 @@ void UPDATE_SCREEN() {
     // Update every second
     unsigned long now = millis();
 
-    if ((now - lastTimeUpdated) > 1000) {
+    if ((now - lastTimeUpdated) > 500) {
       show_status();
       lastTimeUpdated = now;
     }
@@ -182,32 +206,77 @@ void UPDATE_SCREEN() {
 }
 
 void ENABLE() {
-  int EN = digitalRead(D0);
-  if (EN == HIGH && EN_ANT == LOW) {
-    c = c + 1;
+  int pressed = digitalRead( BUTTON_PIN );
+
+  if (pressed == HIGH && pressedPrev == LOW) {
+    ESTAT = !ESTAT;
   }
-  EN_ANT = EN;
-  if (c % 2 == 0) {
-    ESTAT = 0;
-  } else {
-    ESTAT = 1;
-  }
+
+  pressedPrev = pressed;
+
 }
 
 
 void THERMISTOR() {
-  Vo = analogRead(A0);                     // lectura de A0
-  R2 = R1 * ((1023.0) / (float)Vo - 1.0);  // conversion de tension a resistencia
-  logR2 = log(R2);
-  // Serial.println(R2);
-  if (R2 < 10500) {
-    c1 = 1.369358582e-03, c2 = 1.026280639e-04, c3 = 5.585196447e-07;
-  } else {
-    c1 = -3.532779690e-03, c2 = 8.606773781e-04, c3 = -19.80406727e-07;
+  float ema_alpha = .1;
+
+  // Read value
+  uint read = analogRead(A0);    
+  delay(10);
+
+  // Init vo_sample buffer (if is first time)
+  if( !vo_init ) {
+    vo_init = true;
+    for( int i = 0; i < VO_SAMPLE_COUNT; i++ ) vo_sample_buffer[i] = read;
+    vo_sample_sum = (float)read * VO_SAMPLE_COUNT;
+    vo_sample_average_prev = (float)read;
   }
 
-  TEMPERATURA = (1.0 / (c1 + c2 * logR2 + c3 * logR2 * logR2 * logR2));  // temperature in Kelvin
-  TEMPERATURA = TEMPERATURA - 273.15;                                    // convert Kelvin to Celcius
+  // Calculate average
+  vo_sample_sum -= vo_sample_buffer[ vo_sample_index ];
+  vo_sample_buffer[ vo_sample_index ] = (float)read;
+  vo_sample_sum += (float)read;
+
+  // Change index
+  vo_sample_index = ( vo_sample_index + 1 ) % VO_SAMPLE_COUNT;
+
+  // Recalc average
+  vo_sample_average = vo_sample_sum / VO_SAMPLE_COUNT;
+  
+  // Apply EMA filter
+  Vo = ema_alpha * vo_sample_average + (1 - ema_alpha) * vo_sample_average_prev ;
+  vo_sample_average_prev = Vo;
+
+
+  // Calc NTC resistor value. 
+  //   Note: Depending of connection, expresion could be: R2 = R1 * ((1023.0) / (float)Vo - 1.0);  
+  R2 = R1 * ( ( 1023.0 / Vo ) - 1 ); 
+
+  logR2 = log(R2);
+  
+  // if (R2 < 10500) {
+    c1 = 0.9188169704e-03;
+    c2 = 2.018954414e-04; 
+    c3 = 0.7999925558e-07;
+  // } 
+  // else {
+  //   c1 = -3.532779690e-03;
+  //   c2 = 8.606773781e-04;
+  //   c3 = -19.80406727e-07;
+  // }
+
+  //
+  //  Steinhart-Hart equation: 
+  //  1/T = c1 + c2 * logR + c3 * logR^3
+  // TEMPERATURA = (1.0 / (c1 + c2 * logR2 + c3 * logR2 * logR2 * logR2));  // temperature in Kelvin
+  // TEMPERATURA = TEMPERATURA - 273.15;                                    // convert Kelvin to Celcius
+
+
+  TEMPERATURA = (1.0 / (c1 + c2 * logR2 + c3 * pow( logR2, 3 ) ) );  // temperature in Kelvin
+  TEMPERATURA = TEMPERATURA - 273.15;                              // convert Kelvin to Celcius
+
+
+  Serial.printf( "Read D0:%d,Vo:%f,R_NTC:%f,Temp:%f\n", read, Vo, R2, TEMPERATURA );
 
   // Serial.println(TEMPERATURA);
   if (TEMPERATURA < 0) {
@@ -235,26 +304,34 @@ void PIDCONTROL() {
 
   Input = TEMPERATURA;
 
-  if (ESTAT == 1) {
+  if ( ESTAT ) {
 
     contador2 = contador2 + 1;
-    if (contador2 == 2) {
+    if (contador2 == 5) {
       double gap = abs(Setpoint - TEMPERATURA);
-      if (gap < 20) {
-        myPID.SetTunings(conKp, conKi, conKd);
-      } else {
+      // if (gap < 20) {
+      //   myPID.SetTunings(conKp, conKi, conKd);
+      // } else {
         myPID.SetTunings(agrKp, agrKi, agrKd);
-      }
+      // }
       myPID.Compute();
       contador2 = 0;
     }
 
-    analogWrite(D3, Output);
+    // Inverts output (because logit is inverted in hardware: pnp + mosfet with pull-up)
+    analogWrite(GATE_PIN, Max - Output);
+    digitalWrite( LED_BUILTIN, HIGH );
+  }
+  else {
+    // Inverts output (because logit is inverted in hardware: pnp + mosfet with pull-up)
+    // Max value => gate-closed
+    analogWrite(GATE_PIN, Max);
+    digitalWrite( LED_BUILTIN, LOW );
   }
 
-  if (ESTAT == 0) {
-    analogWrite(D3, 0);
-  }
+
+  Serial.printf("PID_Output:%f\n", Output );
+
 }
 
 
@@ -281,13 +358,13 @@ void show_status() {
   do {
 
     // Current temperature
-    show_temperature( TEMPERATURAPANTALLA, 60, DISPLAY_HEADER_SIZE + 16 + 4 );
+    show_temperature(TEMPERATURAPANTALLA, 60, DISPLAY_HEADER_SIZE + 16 + 4);
 
     // Target temperature
-    show_temperature( Setpoint, 60, DISPLAY_HEADER_SIZE + 46 );
+    show_temperature(Setpoint, 60, DISPLAY_HEADER_SIZE + 46);
 
     // Thermomether ICON
-    if (ESTAT == 1) {
+    if (ESTAT) {
       if (conta2 < 30) {
         u8g2.drawXBMP(5, 4, 40, 64, TEMP1);
         conta2 = conta2 + 1;
@@ -300,28 +377,25 @@ void show_status() {
       }
     }
 
-    // Extra info in header 
+    // Extra info in header
     show_header();
 
   } while (u8g2.nextPage());
 }
 
-void show_temperature( double value, int x, int y ) {
+void show_temperature(double value, int x, int y) {
 
   u8g2.setFont(u8g2_font_inb16_mf);
   u8g2.setCursor(x, y);
 
   char t[7];
-  sprintf(t, "%3d%cC", (int)value, 176 ); // 3 digits, º and "C".
+  sprintf(t, "%3d%cC", (int)value, 176);  // 3 digits, º and "C".
   u8g2.print(t);
-
 }
 
 void show_header() {
-  
+
   u8g2.setFont(u8g2_font_6x13_tr);
-  u8g2.setCursor( DISPLAY_WIDTH - ( display_title.length() * 6 ) , DISPLAY_HEADER_SIZE - 6 );
-  u8g2.print( display_title );
-
+  u8g2.setCursor(DISPLAY_WIDTH - (display_title.length() * 6), DISPLAY_HEADER_SIZE - 6);
+  u8g2.print(display_title);
 }
-
